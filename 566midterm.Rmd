@@ -1,0 +1,306 @@
+---
+title: "pm566 Midterm"
+output: html_document
+authur: "Jiqing Wu"
+---
+
+```{r}
+knitr::opts_chunk$set(include  = TRUE)
+
+library(data.table)
+library(tidyverse)
+library(leaflet)
+library(dplyr)
+library(dtplyr)
+```
+
+
+ Read in data
+ Here is the link to the data (the file is too large to upload): https://data.lacity.org/A-Safe-City/Arrest-Data-from-2010-to-2019/yru6-6re4
+ 
+
+```{r}
+arrestdata = read.csv("/Users/jiqingwu/Desktop/566 Introduction to Health Data Science/midterm/Arrest_Data_from_2010_to_2019.csv")
+```
+
+# Introduction
+
+This dataset reflects arrest incidents in the City of Los Angeles from 2010 to 2019. There are 1,320,000 rows in this dataset, each row represents an arrest. The questions are Whether the number of arrest incidents in the City of Los Angeles from 2010 to 2019 decreased, and is there any relationship of age with variables in sex, area, time and arrest type in the crime situation in 2019? The five main variables I choose represent criminal age, criminal sex, Patrol Divisions location, arrested time and the type of charge the individual was arrested for repectively.
+
+
+# Methods
+
+In order to find out the answer, I have separated  the dataset in 2010 and 2019. There are 162344 rows and 26 columns in crime data 2010, 88296 rows and 26 columns in crime data 2019. After check the main variables (Sex, Age, Area, Time and Arrest Type), I found there are missing values in the Time variable. So I imputed the missing value using the mean value grouped by sex, area and arrest type. I also found a case which the arrested position (LAT=0.00, LON=0.00) is too far away from the others, In order to make map looks more clear, I removed this case only in the mapping step. There is no implausible values in these main variables. I recoded the sex, arrest type and created a new variable "Part of Day" based on Time for the analysis in the next step. After data wrangling step, I created the summary tables for mean of age, standard deviation of age, female propotion and male propotion grouped by area, arrested type and part of day both in 2010 and 2019. 
+
+For the difference between 2010 and 2019, I choose to make barcahrt to show the variation in arrest type, criminal sex, part of day, and boxplot to show the variation in criminal age. I also made a map to show difference in the distribution of arrested position. However the map for the whole dataset in these two years are too slow to show up (the dataset is too large), I took the distribution of arrested position arrested by Patrol Divisions in central area as an instance.
+
+For the relationship of age with sex, time, area and arrest type in 2019, I used the histogram to show the correlations between age with arrest type and part of day. I used summary graphs to show the correlations between age with sex and area. Finally I used anova function to calculate the p-value and showt the relationship statistically.
+
+```{r}
+
+arrestdata$Arrest.Date <- as.character(arrestdata$Arrest.Date)
+
+# separate by year
+
+arrestdata$Date <- sapply(arrestdata$Arrest.Date,function(x){
+  strsplit(x,"/")[[1]][3]
+  })
+
+data2010 <- arrestdata[arrestdata$Date=="2010",]
+data2019 <- arrestdata[arrestdata$Date=="2019",]
+
+```
+
+ Data wrangling
+
+```{r}
+
+# Check the data
+
+#table(Arrest2010$Sex.Code)
+#table(Arrest2010$Area.Name)
+#table(Arrest2010$Arrest.Type.Code)
+#summary(Arrest2010$Age)
+#summary(Arrest2010$Time)
+
+#table(Arrest2019$Sex.Code)
+#summary(Arrest2019$Time)
+#table(Arrest2019$Area.Name)
+#table(Arrest2019$Arrest.Type.Code)
+#summary(Arrest2019$Age)
+
+# Impute missing value in Time with the mean value group by sex, area and arrest type
+
+Arrest2010 <- data2010 %>%
+  group_by(Sex.Code, Area.Name, Arrest.Type.Code) %>%
+  mutate(
+    time_imp = coalesce(Time, mean(Time, na.rm = TRUE))
+  ) %>% compute()
+
+Arrest2019 <- data2019 %>%
+  group_by(Sex.Code, Area.Name, Arrest.Type.Code) %>%
+  mutate(
+    time_imp = coalesce(Time, mean(Time, na.rm = TRUE))
+  ) %>% compute()
+
+
+# Remove implausible value
+
+Arrest2010map<-Arrest2010[Arrest2010$LAT>=30 & Arrest2010$LON<=-100,]
+Arrest2019map<-Arrest2019[Arrest2019$LAT>=30 & Arrest2019$LON<=-100,]
+
+# Create new variable, part of the day
+
+Arrest2010$PartOfDay <- cut(Arrest2010$time_imp, 
+          breaks=c(0000, 600, 1200, 1800, 2400), 
+          labels=c("dawn","moring","afternoon","night"))
+
+Arrest2019$PartOfDay <- cut(Arrest2019$time_imp, 
+          breaks=c(0000, 600, 1200, 1800, 2400), 
+          labels=c("dawn","moring","afternoon","night"))
+
+# Recode variables
+
+Arrest2010$SexCode <- recode(Arrest2010$Sex.Code, "F" = 0, "M" = 1 )
+Arrest2019$SexCode <- recode(Arrest2019$Sex.Code, "F" = 0, "M" = 1 )
+
+Arrest2010$Arrest.Type <- recode(Arrest2010$Arrest.Type.Code, "D" = "Dependent", "F" = "Felony", "I" = "Infraction", "M" = "Misdemeanor", "O" = "Other")
+Arrest2019$Arrest.Type <- recode(Arrest2019$Arrest.Type.Code, "D" = "Dependent", "F" = "Felony", "I" = "Infraction", "M" = "Misdemeanor", "O" = "Other")
+```
+
+
+```{r}
+
+# Create summary table
+
+# In 2010
+
+Arrest2010 %>% group_by(Arrest.Type) %>%
+  summarise(
+    Age_avg = mean(Age, na.rm = TRUE), 
+    Age_sd = sd(Age, na.rm = TRUE),
+    Male_prop = paste0(round(100*sum(SexCode, na.rm = TRUE)/length(SexCode), 2), '%'),
+    Female_prop = paste0(round(100-100*sum(SexCode, na.rm = TRUE)/length(SexCode), 2), '%')
+  ) %>% arrange(Arrest.Type)
+
+Arrest2010 %>% group_by(PartOfDay) %>%
+  summarise(
+    Age_avg = mean(Age, na.rm = TRUE), 
+    Age_sd = sd(Age, na.rm = TRUE),
+    Male_prop = paste0(round(100*sum(SexCode, na.rm = TRUE)/length(SexCode), 2), '%'),
+    Female_prop = paste0(round(100-100*sum(SexCode, na.rm = TRUE)/length(SexCode), 2), '%')
+  ) %>% arrange(PartOfDay)
+
+Arrest2010 %>% group_by(Area.Name) %>%
+  summarise(
+    Age_avg = mean(Age, na.rm = TRUE), 
+    Age_sd = sd(Age, na.rm = TRUE),
+    Male_prop = paste0(round(100*sum(SexCode, na.rm = TRUE)/length(SexCode), 2), '%'),
+    Female_prop = paste0(round(100-100*sum(SexCode, na.rm = TRUE)/length(SexCode), 2), '%')
+  ) %>% arrange(Area.Name)
+
+# 2019
+
+Arrest2019 %>% group_by(Arrest.Type) %>%
+  summarise(
+    Age_avg = mean(Age, na.rm = TRUE), 
+    Age_sd = sd(Age, na.rm = TRUE),
+    Male_prop = paste0(round(100*sum(SexCode, na.rm = TRUE)/length(SexCode), 2), '%'),
+    Female_prop = paste0(round(100-100*sum(SexCode, na.rm = TRUE)/length(SexCode), 2), '%')
+  ) %>% arrange(Arrest.Type)
+
+Arrest2019 %>% group_by(PartOfDay) %>%
+  summarise(
+    Age_avg = mean(Age, na.rm = TRUE), 
+    Age_sd = sd(Age, na.rm = TRUE),
+    Male_prop = paste0(round(100*sum(SexCode, na.rm = TRUE)/length(SexCode), 2), '%'),
+    Female_prop = paste0(round(100-100*sum(SexCode, na.rm = TRUE)/length(SexCode), 2), '%')
+  ) %>% arrange(PartOfDay)
+
+Arrest2019 %>% group_by(Area.Name) %>%
+  summarise(
+    Age_avg = mean(Age, na.rm = TRUE), 
+    Age_sd = sd(Age, na.rm = TRUE),
+    Male_prop = paste0(round(100*sum(SexCode, na.rm = TRUE)/length(SexCode), 2), '%'),
+    Female_prop = paste0(round(100-100*sum(SexCode, na.rm = TRUE)/length(SexCode), 2), '%')
+  ) %>% arrange(Area.Name)
+
+```
+
+# Preliminary Results
+
+From the first step, I found that the total number of arrest cases are dramatically droped. In 2010, there are 129346 males are arrested and 32998 females. While in 2019, there are only 69491 males and 18805 females are arrested, almost half. In 2010, the mean and median age of criminals are 32.16 and 29 while in 2019 increase to 35.25 and 33 respectively. Misdemeanor is the most common type of arrest. There are 106249 criminals in 2010 were arrested because of that while only 48533 in 2019. Patrol divisions in Hollywood has the most arrest cases, in 2010 (15671), while in 2019, Central area became the most. Arrest incidences decrease from 0:00 to 5:00, arrive its lowest point at about 5:00 and highest point at about 16:00 both in 2010 and 2019. 
+
+ Exploratory Data Analysis
+ 
+1. Difference in 2010 and 2019
+
+```{r}
+
+# Barchart
+
+ArrestAll <- rbind(Arrest2010, Arrest2019)
+
+ArrestAll %>%
+  ggplot() +
+  geom_bar(mapping = aes(x = Date, fill = Arrest.Type)) +
+  scale_fill_brewer(palette = "GnBu") + 
+  labs(title="Barchart of arrest type in 2010 and 2019")
+
+ArrestAll %>%
+  ggplot() +
+  geom_bar(mapping = aes(x = Date, fill = Sex.Code)) +
+  scale_fill_brewer(palette = "GnBu") + 
+  labs(title="Barchart of sex in 2010 and 2019")
+
+ArrestAll %>%
+  ggplot() +
+  geom_bar(mapping = aes(x = Date, fill = PartOfDay)) +
+  scale_fill_brewer(palette = "GnBu") + 
+  labs(title="Barchart of arrest time in 2010 and 2019")
+
+# boxplot
+
+ArrestAll %>% 
+  ggplot()+
+  geom_boxplot(mapping=aes(x=Date, y=Age, fill=Date))
+
+```
+
+Use the incidence which arrested by patrol divisions in central area as an example. 
+
+```{r}
+
+# mapping
+
+central2010 <- Arrest2010map[Arrest2010map$Area.Name=="Central",]
+central2019 <- Arrest2019map[Arrest2019map$Area.Name=="Central",]
+
+leaflet() %>% 
+  addProviderTiles("OpenStreetMap") %>% 
+  addCircles(data=central2010, lat=~LAT,lng=~LON, opacity=1, fillOpacity=0.1, radius=100, color="blue") %>%
+  addCircles(data=central2019, lat=~LAT,lng=~LON, opacity=1, fillOpacity=0.1, radius=100, color="red")
+
+```
+
+
+Results table
+
+|  | Difference with 2010 | 
+| :----- | ----: | 
+| Number of cases | Decreased | 
+| Arrest Time | Almost no change |  
+| Criminal Sex | Almost no change | 
+| Patrol Divisions Area | arrested position are more concentrated near the patrol division area | 
+| Criminal Age | Older |
+| Arrest Type | Relatively more proportion of Felony |
+
+
+2. Relationship of age and arrest type, sex, part of day, area in 2019.
+
+```{r}
+
+# histogram
+
+Arrest2019 %>%
+ggplot(diamonds, mapping = aes(x = Age, fill = Arrest.Type)) +
+  scale_fill_brewer(palette = "GnBu") +
+  geom_histogram(binwidth = 1) + 
+  labs(title="histograms of Age by Arrest type")
+
+Arrest2019 %>%
+ggplot(diamonds, mapping = aes(x = Age, fill = PartOfDay)) +
+  scale_fill_brewer(palette = "GnBu") +
+  geom_histogram(binwidth = 1) + 
+  labs(title="histograms of Age by arrested time")
+
+```
+
+
+```{r}
+
+# summary graphs
+
+Arrest2019 %>%
+  ggplot() + 
+  stat_summary(mapping = aes(x = Sex.Code, y = Age),
+               fun.min = min,
+               fun.max = max,
+               fun = median) +
+labs(title="Summary graphs of age by sex")
+
+Arrest2019 %>%
+  ggplot() + 
+  stat_summary(mapping = aes(x = Age, y = Area.Name),
+               fun.min = min,
+               fun.max = max,
+               fun = median) +
+labs(title="Summary graphs of age by area")
+
+```
+
+ Relationship 
+
+```{r}
+
+#summary(aov(Age ~ Arrest.Type,data = Arrest2019))
+
+#summary(aov(Age ~ PartOfDay,data = Arrest2019))
+
+#summary(aov(Age ~ Sex.Code,data = Arrest2019))
+
+#summary(aov(Age ~ Area.Name,data = Arrest2019))
+
+```
+
+Summary of Results 
+
+| Variables | F-value | p-value | Related with age? |
+| :-----| ----: | :----: | :----: |
+| Arrest Type | 783.1 | <0.05 | Yes |
+| Arrest Time | 467.2 | <0.05 | Yes |
+| Criminal Sex | 857.6 | <0.05 | Yes |
+| Patrol Divisions Area | 146.5 | <0.05 | Yes |
+
+# brief Conclusion
+According to my questions in the first step, the arrest incidences in the City of LA in 2010 and 2019 are different in the total number, criminal age, patrol divisions area and arrest type. In 2019, the age of arrest criminal in the City of LA is correlated in arrest type, arrest time, criminal sex, and patrol divisions area.
